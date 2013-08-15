@@ -1,4 +1,4 @@
-Suggester - the heart for full-text auto-complete web services.
+Suggester - the heart for full-text auto-complete web services
 =========
 
 Features
