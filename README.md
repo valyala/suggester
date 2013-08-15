@@ -1,6 +1,10 @@
 Suggester - the heart for full-text auto-complete web services
 =========
 
+The suggester is successfully used in search autocompletion services
+on http://prom.ua, http://tiu.ru, http://deal.by, http://satu.kz
+and http://prom.md.
+
 Features
 --------
 
