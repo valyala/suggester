@@ -4,8 +4,8 @@ Suggester - the heart for full-text auto-complete web services
 Features
 --------
 
-  * Support full-text prefix search.
-  * Fast. Up to 10K suggestions per second for a million of keywords.
+  * Supports full-text prefix search.
+  * It is fast. Up to 10K lookups per second for a million of keywords.
   * Low memory usage. Requires less than 100MB of RAM for a million of typical
     keywords.
   * Easy-to-hack concise source code.
