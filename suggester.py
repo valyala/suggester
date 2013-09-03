@@ -6,10 +6,9 @@ import re
 import struct
 
 
-_TOKEN_DELIMITER_REGEXP = re.compile('[-?!,"\'/[\\]\\.\\s{}&+<>;:|()_]+')
-
 _DEFAULT_SHARD_SIZE = 500 * 1000
-
+_QUALITY_MULTIPLIER = 200
+_MAX_SEARCH_QUERY_WORDS = 7
 
 def default_tokenizer(s):
     s = s.lower()
@@ -61,13 +60,18 @@ class Suggester(object):
         pickle.dump(self._index_data, file_stream, pickle.HIGHEST_PROTOCOL)
 
 
+_TOKEN_DELIMITER_REGEXP = re.compile('[-?!,"\'/[\\]\\.\\s{}&+<>;:|()_]+')
 _NEWLINE_BYTEARRAY = bytearray(u'\n', 'utf-8')
+_UINT32_PACKER = struct.Struct('>L')
+_TOKEN_OFFSETS_PACKER = struct.Struct('>BL')
 
 
 def _find_matched_suggestions(
     index_data, search_query, limit, allow_missing_words,
 ):
-    words = default_tokenizer(unicode(search_query))
+    words = default_tokenizer(unicode(search_query))[:_MAX_SEARCH_QUERY_WORDS]
+    if not words:
+        return []
     suggestions = []
     missing_words = []
     for keywords, tokens, offsets_data in index_data:
@@ -119,7 +123,7 @@ def _generate_keywords_index(keywords_with_payloads, tokenizer):
                 continue
             if i > 0xff:
                 break
-            s = bytearray(struct.pack('>BL', i, len(keywords_data)))
+            s = bytearray(_TOKEN_OFFSETS_PACKER.pack(i, len(keywords_data)))
             s.extend(bytearray(token, 'utf-8'))
             tokens.append(bytes(s))
         s = u'%s\n%s\n' % (keyword, payload)
@@ -134,9 +138,9 @@ def _generate_keywords_index(keywords_with_payloads, tokenizer):
     for token, token_group in groupby(tokens, key=lambda t: t[5:]):
         offset = len(offsets_data)
         token_group = sorted(token_group)
-        offsets_data.extend(struct.pack('>L', len(token_group)))
+        offsets_data.extend(_UINT32_PACKER.pack(len(token_group)))
         for t in token_group:
-            offsets_data.extend(t[1:5])
+            offsets_data.extend(t[:5])
         tokens_data.extend(bytearray(u'%08x' % offset, 'utf-8'))
         tokens_data.extend(token)
         tokens_data.extend(_NEWLINE_BYTEARRAY)
@@ -178,18 +182,15 @@ def _get_keyword_offsets(tokens, offsets_data, word, limit):
         if pivot[:word_len] != word:
             break
         token_offset = int(tokens[n:n+8].decode('utf-8'), 16)
-        offsets_count = struct.unpack(
-            '>L',
+        offsets_count = _UINT32_PACKER.unpack(
             bytes(offsets_data[token_offset:token_offset+4])
         )[0]
         if offsets_count + len(offsets) > limit:
             offsets_count = limit - len(offsets)
         token_offset += 4
         offsets.extend(
-            struct.unpack(
-                '>%dL' % offsets_count,
-                bytes(offsets_data[token_offset:token_offset+4*offsets_count])
-            )
+            bytes(offsets_data[token_offset+i*5:token_offset+(i+1)*5])
+            for i in range(offsets_count)
         )
         if len(offsets) >= limit:
             break
@@ -198,17 +199,45 @@ def _get_keyword_offsets(tokens, offsets_data, word, limit):
 
 
 def _get_suggested_keywords(keywords, tokens, offsets_data, words, limit):
-    per_word_limit = limit
-    if len(words) > 1:
-        per_word_limit = per_word_limit * 100
     offsets, missing_words = _get_suggested_keyword_offsets(
-        tokens, offsets_data, words, per_word_limit,
+        tokens, offsets_data, words, limit * _QUALITY_MULTIPLIER,
     )
-    offsets = _remove_duplicates(offsets)
     keywords_with_payloads = _get_keywords_with_payloads(
         keywords, offsets, words, limit,
     )
     return keywords_with_payloads, missing_words
+
+
+def _get_suggested_keyword_offsets(tokens, offsets_data, words, limit):
+    offsets = []
+    missing_words = set()
+    for word in words:
+        if not word:
+            continue
+        word_offsets = _get_keyword_offsets(tokens, offsets_data, word, limit)
+        if not word_offsets:
+            missing_words.add(word)
+        if len(word_offsets) < limit:
+            offsets = [word_offsets]
+            break
+        offsets.append(word_offsets)
+    return _intersect_offsets(offsets, limit), missing_words
+
+
+def _intersect_offsets(offsets, limit):
+    if len(offsets) > 1:
+        unique_offsets = frozenset.intersection(*[
+            frozenset(x[1:] for x in ff)
+            for ff in offsets
+        ])
+        offsets = [
+            offset
+            for offset in offsets[0]
+            if offset[1:] in unique_offsets
+        ]
+    else:
+        offsets = offsets[0]
+    return _remove_duplicates(offset[1:] for offset in sorted(offsets))
 
 
 def _remove_duplicates(items):
@@ -222,33 +251,10 @@ def _remove_duplicates(items):
     return result_items
 
 
-def _get_suggested_keyword_offsets(tokens, offsets_data, words, limit):
-    offsets = []
-    missing_words = set()
-    for word in words:
-        if not word:
-            continue
-        word_offsets = _get_keyword_offsets(tokens, offsets_data, word, limit)
-        if not word_offsets:
-            missing_words.add(word)
-        offsets.append(word_offsets)
-    return _merge_offsets(offsets, limit), missing_words
-
-
-def _merge_offsets(offsets, limit):
-    if not offsets:
-        return []
-    min_offsets_count = min(len(ff) for ff in offsets)
-    if min_offsets_count < limit:
-        return [ff for ff in offsets if len(ff) == min_offsets_count][0]
-    first_word_offsets = offsets[0]
-    offsets = frozenset.intersection(*(frozenset(ff) for ff in offsets))
-    return [ff for ff in first_word_offsets if ff in offsets]
-
-
 def _get_keywords_with_payloads(keywords, offsets, words, limit):
     keywords_with_payloads = []
     for offset in offsets:
+        offset = _UINT32_PACKER.unpack(offset)[0]
         keyword, offset = _get_next_line(keywords, offset)
         keyword = keyword.decode('utf-8')
         keyword_lower = keyword.lower()
