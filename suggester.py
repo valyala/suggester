@@ -19,7 +19,7 @@ def default_tokenizer(s):
     ]
 
 
-def fullchar_tokenizer(s):
+def infix_tokenizer(s):
     tokens = []
     for word in default_tokenizer(s):
         tokens.append(word)
