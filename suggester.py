@@ -192,8 +192,6 @@ def _get_suggested_keywords(keywords, tokens, offsets_data, words, limit):
 def _get_suggested_keyword_offsets(tokens, offsets_data, words, limit):
     offsets = []
     for word in words:
-        if not word:
-            continue
         word_offsets = _get_keyword_offsets(tokens, offsets_data, word, limit)
         if len(word_offsets) < limit:
             offsets = [word_offsets]
