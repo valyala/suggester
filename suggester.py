@@ -38,12 +38,9 @@ class Suggester(object):
         self._shard_size = shard_size
         self._index_data = []
 
-    def suggest_keywords(self, search_query,
-        limit=10,
-        allow_missing_words=False,
-    ):
+    def suggest_keywords(self, search_query, limit=10):
         return _find_matched_suggestions(
-            self._index_data, search_query, limit, allow_missing_words,
+            self._index_data, search_query, limit,
         )
 
     def update_keywords(self, keywords_with_payloads):
@@ -66,30 +63,14 @@ _UINT32_PACKER = struct.Struct('>L')
 _TOKEN_OFFSETS_PACKER = struct.Struct('>BL')
 
 
-def _find_matched_suggestions(
-    index_data, search_query, limit, allow_missing_words,
-):
+def _find_matched_suggestions(index_data, search_query, limit):
     words = default_tokenizer(unicode(search_query))[:_MAX_SEARCH_QUERY_WORDS]
     if not words:
         return []
     suggestions = []
-    missing_words = []
     for keywords, tokens, offsets_data in index_data:
-        shard_suggestions, shard_missing_words = _get_suggested_keywords(
+        shard_suggestions = _get_suggested_keywords(
             keywords, tokens, offsets_data, words, limit,
-        )
-        suggestions.extend(shard_suggestions)
-        missing_words.append(shard_missing_words)
-        if len(suggestions) > limit:
-            break
-    if suggestions or not allow_missing_words:
-        return suggestions[:limit]
-
-    for data, shard_missing_words in zip(index_data, missing_words):
-        keywords, tokens, offsets_data = data
-        shard_words = [w for w in words if w not in shard_missing_words]
-        shard_suggestions, _ = _get_suggested_keywords(
-            keywords, tokens, offsets_data, shard_words, limit,
         )
         suggestions.extend(shard_suggestions)
         if len(suggestions) > limit:
@@ -199,29 +180,26 @@ def _get_keyword_offsets(tokens, offsets_data, word, limit):
 
 
 def _get_suggested_keywords(keywords, tokens, offsets_data, words, limit):
-    offsets, missing_words = _get_suggested_keyword_offsets(
+    offsets = _get_suggested_keyword_offsets(
         tokens, offsets_data, words, limit * _QUALITY_MULTIPLIER,
     )
     keywords_with_payloads = _get_keywords_with_payloads(
         keywords, offsets, words, limit,
     )
-    return keywords_with_payloads, missing_words
+    return keywords_with_payloads
 
 
 def _get_suggested_keyword_offsets(tokens, offsets_data, words, limit):
     offsets = []
-    missing_words = set()
     for word in words:
         if not word:
             continue
         word_offsets = _get_keyword_offsets(tokens, offsets_data, word, limit)
-        if not word_offsets:
-            missing_words.add(word)
         if len(word_offsets) < limit:
             offsets = [word_offsets]
             break
         offsets.append(word_offsets)
-    return _intersect_offsets(offsets, limit), missing_words
+    return _intersect_offsets(offsets, limit)
 
 
 def _intersect_offsets(offsets, limit):
