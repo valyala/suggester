@@ -1,5 +1,6 @@
 # coding=utf-8
 
+from collections import defaultdict
 import cPickle as pickle
 from itertools import groupby
 import re
@@ -59,8 +60,8 @@ class Suggester(object):
 
 _TOKEN_DELIMITER_REGEXP = re.compile('[-?!,"\'/[\\]\\.\\s{}&+<>;:|()_]+')
 _NEWLINE_BYTEARRAY = bytearray(u'\n', 'utf-8')
-_UINT32_PACKER = struct.Struct('>L')
-_TOKEN_OFFSETS_PACKER = struct.Struct('>BL')
+_UINT32_PACKER = struct.Struct('>I')
+_TOKEN_OFFSETS_PACKER = struct.Struct('>BI')
 
 
 def _find_matched_suggestions(index_data, search_query, limit):
@@ -201,30 +202,20 @@ def _get_suggested_keyword_offsets(tokens, offsets_data, words, limit):
 
 
 def _intersect_offsets(offsets, limit):
-    if len(offsets) > 1:
-        unique_offsets = frozenset.intersection(*[
-            frozenset(x[1:] for x in ff)
-            for ff in offsets
-        ])
-        offsets = [
-            offset
-            for offset in offsets[0]
-            if offset[1:] in unique_offsets
-        ]
-    else:
-        offsets = offsets[0]
-    return _remove_duplicates(offset[1:] for offset in sorted(offsets))
+    if len(offsets) < 2:
+        return [offset[1:] for offset in sorted(offsets[0])]
 
-
-def _remove_duplicates(items):
-    used_items = set()
-    result_items = []
-    for item in items:
-        if item in used_items:
-            continue
-        used_items.add(item)
-        result_items.append(item)
-    return result_items
+    unique_offsets = frozenset.intersection(*[
+        frozenset(x[1:] for x in ff)
+        for ff in offsets
+    ])
+    weighted_offsets = defaultdict(int)
+    for word_offsets in offsets:
+        for offset in word_offsets:
+            if offset[1:] in unique_offsets:
+                weighted_offsets[offset[1:]] += ord(offset[0])
+    offsets = sorted((v, k) for k, v in weighted_offsets.items())
+    return [k for _, k in offsets]
 
 
 def _get_keywords_with_payloads(keywords, offsets, words, limit):
