@@ -198,13 +198,10 @@ def _get_suggested_keyword_offsets(tokens, offsets_data, words, limit):
             offsets = [word_offsets]
             break
         offsets.append(word_offsets)
-    return _intersect_offsets(offsets, limit)
+    return _intersect_offsets(offsets)
 
 
-def _intersect_offsets(offsets, limit):
-    if len(offsets) < 2:
-        return [offset[1:] for offset in sorted(offsets[0])]
-
+def _intersect_offsets(offsets):
     unique_offsets = frozenset.intersection(*[
         frozenset(x[1:] for x in ff)
         for ff in offsets
@@ -212,8 +209,9 @@ def _intersect_offsets(offsets, limit):
     weighted_offsets = defaultdict(int)
     for word_offsets in offsets:
         for offset in word_offsets:
-            if offset[1:] in unique_offsets:
-                weighted_offsets[offset[1:]] += ord(offset[0])
+            k = offset[1:]
+            if k in unique_offsets:
+                weighted_offsets[k] += ord(offset[0])
     offsets = sorted((v, k) for k, v in weighted_offsets.items())
     return [k for _, k in offsets]
 
