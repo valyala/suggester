@@ -76,7 +76,7 @@ def _find_matched_suggestions(index_data, search_query, limit):
         suggestions.extend(shard_suggestions)
         if len(suggestions) > limit:
             break
-    return suggestions[:limit]
+    return _adjust_suggestions_order(suggestions[:limit])
 
 
 def _generate_index_data(keywords_with_payloads, tokenizer, shard_size):
@@ -206,13 +206,13 @@ def _intersect_offsets(offsets):
         frozenset(x[1:] for x in ff)
         for ff in offsets
     ])
-    weighted_offsets = defaultdict(int)
+    weighted_offsets = defaultdict(list)
     for word_offsets in offsets:
         for offset in word_offsets:
             k = offset[1:]
             if k in unique_offsets:
-                weighted_offsets[k] += ord(offset[0])
-    offsets = sorted((v, k) for k, v in weighted_offsets.items())
+                weighted_offsets[k].append(ord(offset[0]))
+    offsets = sorted((sorted(v), k) for k, v in weighted_offsets.items())
     return [k for _, k in offsets]
 
 
@@ -223,14 +223,24 @@ def _get_keywords_with_payloads(keywords, offsets, words, limit):
         keyword, offset = _get_next_line(keywords, offset)
         keyword = keyword.decode('utf-8')
         keyword_lower = keyword.lower()
-        if not all(w in keyword_lower for w in words):
+        weights = sorted(keyword_lower.find(w) for w in words)
+        if weights[0] == -1:
             continue
+        weights.append(len(keyword))
         payload, _ = _get_next_line(keywords, offset)
         payload = payload.decode('utf-8')
-        keywords_with_payloads.append((keyword, payload))
+        keywords_with_payloads.append((weights, keyword, payload))
         if len(keywords_with_payloads) >= limit:
             break
     return keywords_with_payloads
+
+
+def _adjust_suggestions_order(suggestions):
+    suggestions.sort(key=lambda x: x[0])
+    return [
+        (keyword, payload)
+        for _, keyword, payload in suggestions
+    ]
 
 
 def _get_next_line(s, start_offset):
