@@ -7,10 +7,6 @@ import re
 import struct
 
 
-_DEFAULT_SHARD_SIZE = 500 * 1000
-_QUALITY_MULTIPLIER = 200
-_MAX_SEARCH_QUERY_WORDS = 7
-
 def default_tokenizer(s):
     s = s.lower()
     return [
@@ -31,27 +27,33 @@ def infix_tokenizer(s):
 
 class Suggester(object):
 
-    def __init__(self,
-        tokenizer=default_tokenizer,
-        shard_size=_DEFAULT_SHARD_SIZE,
-    ):
+    def __init__(self, tokenizer=default_tokenizer, shard_size=500*1000, max_cached_items_count=20*1000, quality_multiplier=200, max_search_query_words=7):
         self._tokenizer = tokenizer
         self._shard_size = shard_size
         self._index_data = []
+        self._cache = {}
+        self._max_cached_items_count = max_cached_items_count
+        self._quality_multiplier = quality_multiplier
+        self._max_search_query_words = max_search_query_words
 
     def suggest_keywords(self, search_query, limit=10):
-        return _find_matched_suggestions(
-            self._index_data, search_query, limit,
-        )
+        cache = self._cache
+        result, cached_limit = cache.get(search_query, (None, None))
+        if result is None or cached_limit < limit:
+            result = _find_matched_suggestions(self._index_data, search_query, limit, self._quality_multiplier, self._max_search_query_words)
+            cache[search_query] = (result, limit)
+            while len(cache) > self._max_cached_items_count:
+                cache.popitem()
+        return result[:limit] if len(result) > limit else result
 
     def update_keywords(self, keywords_with_payloads):
         self._index_data = []
-        self._index_data = _generate_index_data(
-            keywords_with_payloads, self._tokenizer, self._shard_size,
-        )
+        self._cache = {}
+        self._index_data = _generate_index_data(keywords_with_payloads, self._tokenizer, self._shard_size)
 
     def load_from_file(self, file_stream):
         self._index_data = []
+        self._cache = {}
         self._index_data = pickle.load(file_stream)
 
     def dump_to_file(self, file_stream):
@@ -64,19 +66,15 @@ _UINT32_PACKER = struct.Struct('>I')
 _TOKEN_OFFSETS_PACKER = struct.Struct('>BI')
 
 
-def _find_matched_suggestions(index_data, search_query, limit):
-    words = default_tokenizer(unicode(search_query))[:_MAX_SEARCH_QUERY_WORDS]
+def _find_matched_suggestions(index_data, search_query, limit, quality_multiplier, max_search_query_words):
+    words = default_tokenizer(unicode(search_query))[:max_search_query_words]
     if not words:
         return []
     suggestions = []
     for keywords, tokens, offsets_data in index_data:
-        shard_suggestions = _get_suggested_keywords(
-            keywords, tokens, offsets_data, words, limit,
-        )
+        shard_suggestions = _get_suggested_keywords(keywords, tokens, offsets_data, words, limit * quality_multiplier)
         suggestions.extend(shard_suggestions)
-        if len(suggestions) > limit:
-            break
-    return _adjust_suggestions_order(suggestions[:limit])
+    return _adjust_suggestions_order(suggestions)[:limit]
 
 
 def _generate_index_data(keywords_with_payloads, tokenizer, shard_size):
@@ -181,12 +179,8 @@ def _get_keyword_offsets(tokens, offsets_data, word, limit):
 
 
 def _get_suggested_keywords(keywords, tokens, offsets_data, words, limit):
-    offsets = _get_suggested_keyword_offsets(
-        tokens, offsets_data, words, limit * _QUALITY_MULTIPLIER,
-    )
-    keywords_with_payloads = _get_keywords_with_payloads(
-        keywords, offsets, words, limit,
-    )
+    offsets = _get_suggested_keyword_offsets(tokens, offsets_data, words, limit)
+    keywords_with_payloads = _get_keywords_with_payloads(keywords, offsets, words)
     return keywords_with_payloads
 
 
@@ -216,7 +210,7 @@ def _intersect_offsets(offsets):
     return [k for _, k in offsets]
 
 
-def _get_keywords_with_payloads(keywords, offsets, words, limit):
+def _get_keywords_with_payloads(keywords, offsets, words):
     keywords_with_payloads = []
     for offset in offsets:
         offset = _UINT32_PACKER.unpack(offset)[0]
@@ -230,8 +224,6 @@ def _get_keywords_with_payloads(keywords, offsets, words, limit):
         payload, _ = _get_next_line(keywords, offset)
         payload = payload.decode('utf-8')
         keywords_with_payloads.append((weights, keyword, payload))
-        if len(keywords_with_payloads) >= limit:
-            break
     return keywords_with_payloads
 
 
