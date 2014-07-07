@@ -9,11 +9,11 @@ import struct
 
 def default_tokenizer(s):
     s = s.lower()
-    return [
+    return _unique_list([
         t
         for t in _TOKEN_DELIMITER_REGEXP.split(s)
         if t
-    ]
+    ])
 
 
 def infix_tokenizer(s):
@@ -21,7 +21,7 @@ def infix_tokenizer(s):
     for word in default_tokenizer(s):
         for i in range(len(word)):
             tokens.append(word[i:])
-    return tokens
+    return _unique_list(tokens)
 
 
 class Suggester(object):
@@ -244,4 +244,14 @@ def _adjust_suggestions_order(suggestions):
 def _get_next_line(s, start_offset):
     end_offset = s.index(_NEWLINE_BYTEARRAY, start_offset)
     return s[start_offset:end_offset], end_offset + 1
+
+
+def _unique_list(xx):
+    used_items = set()
+    yy = []
+    for x in xx:
+        if x not in used_items:
+            yy.append(x)
+            used_items.add(x)
+    return yy
 
