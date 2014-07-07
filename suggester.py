@@ -19,8 +19,7 @@ def default_tokenizer(s):
 def infix_tokenizer(s):
     tokens = []
     for word in default_tokenizer(s):
-        tokens.append(word)
-        for i in range(len(word)-1):
+        for i in range(len(word)):
             tokens.append(word[i:])
     return tokens
 
