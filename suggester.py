@@ -70,9 +70,12 @@ def _find_matched_suggestions(index_data, search_query, limit, quality_multiplie
     words = default_tokenizer(unicode(search_query))[:max_search_query_words]
     if not words:
         return []
+    if not (search_query.endswith(u' ') or words[-1].endswith(u'*')):
+        words[-1] = words[-1] + u'*'
     suggestions = []
+    quality_limit = limit * quality_multiplier
     for keywords, tokens, offsets_data in index_data:
-        shard_suggestions = _get_suggested_keywords(keywords, tokens, offsets_data, words, limit * quality_multiplier)
+        shard_suggestions = _get_suggested_keywords(keywords, tokens, offsets_data, words, quality_limit)
         suggestions.extend(shard_suggestions)
     return _adjust_suggestions_order(suggestions)[:limit]
 
@@ -152,19 +155,20 @@ def _get_token_offset(tokens, word):
     return n
 
 
-def _get_keyword_offsets(tokens, offsets_data, word, limit):
+def _get_word_offsets(tokens, offsets_data, word, limit):
+    is_prefix_search = word.endswith(u'*')
+    if is_prefix_search:
+        word = word[:-1]
     word = bytearray(word, 'utf-8')
     word_len = len(word)
     n = _get_token_offset(tokens, word)
     offsets = []
     while n < len(tokens):
         pivot, nn = _get_next_line(tokens, n + 8)
-        if pivot[:word_len] != word:
+        if (is_prefix_search and pivot[:word_len] != word) or (not is_prefix_search and pivot != word):
             break
         token_offset = int(tokens[n:n+8].decode('utf-8'), 16)
-        offsets_count = _UINT32_PACKER.unpack(
-            bytes(offsets_data[token_offset:token_offset+4])
-        )[0]
+        offsets_count = _UINT32_PACKER.unpack(bytes(offsets_data[token_offset:token_offset+4]))[0]
         if offsets_count + len(offsets) > limit:
             offsets_count = limit - len(offsets)
         token_offset += 4
@@ -179,20 +183,16 @@ def _get_keyword_offsets(tokens, offsets_data, word, limit):
 
 
 def _get_suggested_keywords(keywords, tokens, offsets_data, words, limit):
-    offsets = _get_suggested_keyword_offsets(tokens, offsets_data, words, limit)
-    keywords_with_payloads = _get_keywords_with_payloads(keywords, offsets, words)
-    return keywords_with_payloads
-
-
-def _get_suggested_keyword_offsets(tokens, offsets_data, words, limit):
     offsets = []
     for word in words:
-        word_offsets = _get_keyword_offsets(tokens, offsets_data, word, limit)
+        word_offsets = _get_word_offsets(tokens, offsets_data, word, limit)
         if len(word_offsets) < limit:
             offsets = [word_offsets]
             break
         offsets.append(word_offsets)
-    return _intersect_offsets(offsets)
+    offsets = _intersect_offsets(offsets)
+    keywords_with_payloads = _get_keywords_with_payloads(keywords, offsets, words)
+    return keywords_with_payloads
 
 
 def _intersect_offsets(offsets):
@@ -211,6 +211,7 @@ def _intersect_offsets(offsets):
 
 
 def _get_keywords_with_payloads(keywords, offsets, words):
+    words = [_clean_trailing_stars(w) for w in words]
     keywords_with_payloads = []
     for offset in offsets:
         offset = _UINT32_PACKER.unpack(offset)[0]
@@ -225,6 +226,12 @@ def _get_keywords_with_payloads(keywords, offsets, words):
         payload = payload.decode('utf-8')
         keywords_with_payloads.append((weights, keyword, payload))
     return keywords_with_payloads
+
+
+def _clean_trailing_stars(w):
+    while w.endswith(u'*'):
+        w = w[:-1]
+    return w
 
 
 def _adjust_suggestions_order(suggestions):
