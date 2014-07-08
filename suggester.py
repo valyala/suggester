@@ -26,7 +26,7 @@ def infix_tokenizer(s):
 
 class Suggester(object):
 
-    def __init__(self, tokenizer=default_tokenizer, shard_size=500*1000, max_cached_items_count=20*1000, quality_multiplier=200, max_search_query_words=7, use_prefix_search_for_all_words=False):
+    def __init__(self, tokenizer=default_tokenizer, shard_size=500*1000, max_cached_items_count=20*1000, quality_multiplier=200, max_search_query_words=7):
         self._tokenizer = tokenizer
         self._shard_size = shard_size
         self._index_data = []
@@ -34,13 +34,12 @@ class Suggester(object):
         self._max_cached_items_count = max_cached_items_count
         self._quality_multiplier = quality_multiplier
         self._max_search_query_words = max_search_query_words
-        self._use_prefix_search_for_all_words = use_prefix_search_for_all_words
 
     def suggest_keywords(self, search_query, limit=10):
         cache = self._cache
         result, cached_limit = cache.get(search_query, (None, None))
         if result is None or cached_limit < limit:
-            result = _find_matched_suggestions(self._index_data, search_query, limit, self._quality_multiplier, self._max_search_query_words, self._use_prefix_search_for_all_words)
+            result = _find_matched_suggestions(self._index_data, search_query, limit, self._quality_multiplier, self._max_search_query_words)
             cache[search_query] = (result, limit)
             while len(cache) > self._max_cached_items_count:
                 cache.popitem()
@@ -66,13 +65,11 @@ _UINT32_PACKER = struct.Struct('>I')
 _TOKEN_OFFSETS_PACKER = struct.Struct('>BI')
 
 
-def _find_matched_suggestions(index_data, search_query, limit, quality_multiplier, max_search_query_words, use_prefix_search_for_all_words):
+def _find_matched_suggestions(index_data, search_query, limit, quality_multiplier, max_search_query_words):
     words = default_tokenizer(unicode(search_query))[:max_search_query_words]
     if not words:
         return []
-    if use_prefix_search_for_all_words:
-        words = [w + (u'' if w.endswith(u'*') else u'*') for w in words]
-    elif not (search_query.endswith(u' ') or words[-1].endswith(u'*')):
+    if not (search_query.endswith(u' ') or words[-1].endswith(u'*')):
         words[-1] = words[-1] + u'*'
     suggestions = []
     quality_limit = limit * quality_multiplier
