@@ -71,7 +71,7 @@ def _find_matched_suggestions(index_data, search_query, limit, quality_multiplie
     if not words:
         return []
     if use_prefix_search_for_all_words:
-        words = [w + u'*' for w in words]
+        words = [w + (u'' if w.endswith(u'*') else u'*') for w in words]
     elif not (search_query.endswith(u' ') or words[-1].endswith(u'*')):
         words[-1] = words[-1] + u'*'
     suggestions = []
